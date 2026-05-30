@@ -8,6 +8,7 @@ The system prompt enforces the four assignment requirements:
   4. cite the page(s) used.
 """
 import os
+import re
 import logging
 
 from dotenv import load_dotenv
@@ -69,10 +70,9 @@ only cite labels that appear with the passages.
 5. STYLE: Be concise, practical and safety-conscious. If a passage contains a safety \
 warning relevant to the question, include it.
 
-6. FORMAT: Your reply MUST start with a single line containing only one English word — \
-FOUND if you can answer from the passages, or NOT_FOUND if you cannot. Put the status \
-word on its own line. Then, on the following lines, write your answer in {language} (if \
-FOUND). If NOT_FOUND, write nothing after the status line."""
+6. FORMAT: If the answer is NOT clearly in the passages, reply with exactly the single \
+token NOT_FOUND and nothing else. Otherwise, give your answer normally and never write \
+the word NOT_FOUND. Do not repeat yourself."""
 
 
 EXPAND_SYSTEM = """You turn a rider's question into search queries for a motorcycle \
@@ -127,15 +127,24 @@ def message(kind, language, manual_name):
 
 
 def _split_status(text):
-    """Pull the FOUND / NOT_FOUND status off the first line. Returns (found, body)."""
-    lines = text.splitlines()
-    head = lines[0].strip().upper().replace(" ", "") if lines else ""
-    if head.startswith("NOT_FOUND") or head.startswith("NOTFOUND"):
-        return False, "\n".join(lines[1:]).strip()
-    if head.startswith("FOUND"):
-        return True, "\n".join(lines[1:]).strip()
-    # model didn't follow the format — assume it answered, show as-is
-    return True, text.strip()
+    """Decide found vs not-found. A real answer never contains NOT_FOUND, so the
+    token appearing anywhere => refusal. Returns (found, body)."""
+    if re.search(r"NOT[_ ]?FOUND", text, re.IGNORECASE):
+        return False, ""
+    body = re.sub(r"^\s*FOUND[:\s]*", "", text, flags=re.IGNORECASE).strip()
+    return True, _dedupe(body)
+
+
+def _dedupe(text):
+    """Drop repeated lines (safety net against any model repetition loop)."""
+    seen, out = set(), []
+    for line in text.splitlines():
+        key = line.strip()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def build_context(results, page_kind):
@@ -175,6 +184,7 @@ def answer(query, results, manual_name, page_kind, language_override=None):
             temperature=0.0,        # deterministic => same question, same answer
             reasoning_effort="low", # minimum hidden "thinking" (cannot be disabled)
             max_tokens=4096,        # starter-tier hard cap (reasoning shares this budget)
+            frequency_penalty=0.2,  # mild: discourage repetition loops without distorting facts
         )
         return (resp.choices[0].message.content or "").strip()
 

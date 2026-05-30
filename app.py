@@ -3,6 +3,7 @@ import streamlit as st
 from catalogue import list_manuals
 import rag
 import llm
+import vision
 
 st.set_page_config(page_title="Bike Troubleshooting Bot", page_icon="🏍️")
 st.title("🏍️ Bike Troubleshooting Bot")
@@ -95,14 +96,36 @@ if active is not None:
         with st.form("ask"):
             q = st.text_area("Your question (type in English or Hindi):", height=80,
                              placeholder="e.g. How often should I change the engine oil?")
+            image = st.file_uploader(
+                "…or attach a photo (dashboard light, warning label, manual page). "
+                "Optional — works with or without a typed question.",
+                type=["png", "jpg", "jpeg"])
             submitted = st.form_submit_button("Get answer")
 
-        if submitted and q.strip():
+        if submitted and (q.strip() or image is not None):
             try:
+                # If an image was attached, Sarvam Vision reads any text AND
+                # describes it; both merge into the question. (text-only,
+                # image-only, and text+image all work.)
+                image_context = ""
+                if image is not None:
+                    with st.spinner("Looking at the image with Sarvam Vision…"):
+                        image_context = vision.understand_image(image)
+                    if image_context:
+                        st.caption("🖼️ What Sarvam Vision sees in your image:")
+                        st.write(image_context)
+                    else:
+                        st.caption("📷 Couldn't read or describe the image.")
+
+                combined = (q.strip() + "\n" + image_context).strip()
+                if not combined:
+                    st.warning("Please type a question or attach an image with readable text.")
+                    st.stop()
+
                 with st.spinner("Reading the manual and answering…"):
-                    queries = llm.expand_query(q)                       # stabilise retrieval
+                    queries = llm.expand_query(combined)               # stabilise retrieval
                     results = st.session_state["idx"].search_multi(queries, k=6)
-                    found, body, lang = llm.answer(q, results, manual_name, info["page_kind"])
+                    found, body, lang = llm.answer(combined, results, manual_name, info["page_kind"])
 
                 if found:
                     st.session_state["refuse_count"] = 0
@@ -126,4 +149,4 @@ if active is not None:
             except Exception as e:
                 st.error(f"Couldn't get an answer from Sarvam: {e}")
         elif submitted:
-            st.warning("Please type a question first.")
+            st.warning("Please type a question or attach an image first.")

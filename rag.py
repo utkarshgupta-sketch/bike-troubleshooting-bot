@@ -22,7 +22,7 @@ WORDS_PER_CHUNK = 300          # keeps headings with their lists; less fragmenta
 CHUNK_OVERLAP = 80             # generous overlap => stable retrieval across phrasings
 MIN_WORDS_PER_PAGE = 5         # below this average => PDF likely not readable
 MIN_LETTERS_PER_CHUNK = 25     # drop near-empty / table-noise chunks
-CACHE_VERSION = "v4"           # bump to invalidate old cached indexes
+CACHE_VERSION = "v5"           # bump to invalidate old cached indexes
 
 CACHE_DIR = Path(__file__).parent / "cache"
 TEXT_DIR = Path(__file__).parent / "manual_text"   # OCR'd text layers (committed)
@@ -34,6 +34,10 @@ def clean_text(t: str) -> str:
     """Repair common PDF/OCR extraction noise so embeddings match better."""
     if not t:
         return ""
+    # strip markdown image embeds / base64 data-URIs (Sarvam OCR adds these for
+    # image regions; the long base64 blobs otherwise bloat chunks enormously)
+    t = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t)
+    t = re.sub(r"data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+", " ", t)
     t = unicodedata.normalize("NFKC", t)                 # ﬁ->fi, ﬀ->ff, etc.
     # drop private-use glyphs (stray bullet/symbol codes like )
     t = "".join(" " if 0xE000 <= ord(ch) <= 0xF8FF else ch for ch in t)
