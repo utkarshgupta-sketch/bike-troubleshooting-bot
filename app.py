@@ -102,15 +102,27 @@ if active is not None:
                 with st.spinner("Reading the manual and answering…"):
                     queries = llm.expand_query(q)                       # stabilise retrieval
                     results = st.session_state["idx"].search_multi(queries, k=6)
-                    ans, lang = llm.answer(q, results, manual_name, info["page_kind"])
-                st.markdown("### Answer")
-                st.markdown(ans)
-                st.caption(f"Answered in: {lang}")
-                with st.expander("Show the manual passages used (sources)"):
-                    for n, r in enumerate(results, 1):
-                        cite = rag.page_citation(info["page_kind"], r["page_start"], r["page_end"])
-                        st.markdown(f"**#{n} · {cite} · relevance {r['score']:.2f}**")
-                        st.write(r["text"])
+                    found, body, lang = llm.answer(q, results, manual_name, info["page_kind"])
+
+                if found:
+                    st.session_state["refuse_count"] = 0
+                    st.markdown("### Answer")
+                    st.markdown(body)
+                    st.caption(f"Answered in: {lang}")
+                    with st.expander("Show the manual passages used (sources)"):
+                        for n, r in enumerate(results, 1):
+                            cite = rag.page_citation(info["page_kind"], r["page_start"], r["page_end"])
+                            st.markdown(f"**#{n} · {cite} · relevance {r['score']:.2f}**")
+                            st.write(r["text"])
+                else:
+                    # rephrase-before-refuse: ask once, then give the firm refusal
+                    cnt = st.session_state.get("refuse_count", 0) + 1
+                    if cnt == 1:
+                        st.session_state["refuse_count"] = 1
+                        st.info("🔁 " + llm.message("rephrase", lang, manual_name))
+                    else:
+                        st.session_state["refuse_count"] = 0
+                        st.warning(llm.message("refuse", lang, manual_name))
             except Exception as e:
                 st.error(f"Couldn't get an answer from Sarvam: {e}")
         elif submitted:

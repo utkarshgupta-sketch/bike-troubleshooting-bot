@@ -56,11 +56,9 @@ user. Do not use outside knowledge, general facts, or assumptions. The manual is
 only source of truth.
 
 2. REFUSAL: If the answer is not clearly contained in those passages, do NOT guess or \
-make anything up. Instead reply with exactly this, translated into the user's language: \
-"I couldn't find this in the {manual_name}. Please consult a qualified mechanic or your \
-dealer."
+make anything up.
 
-3. LANGUAGE: Write your ENTIRE reply in {language}, because that is the language of the \
+3. LANGUAGE: Write your ENTIRE answer in {language}, because that is the language of the \
 user's question. Do this even if the passages are written in another language — \
 translate the relevant content faithfully.
 
@@ -69,7 +67,12 @@ labels shown with each passage (for example: "(page 18)"). Never invent page num
 only cite labels that appear with the passages.
 
 5. STYLE: Be concise, practical and safety-conscious. If a passage contains a safety \
-warning relevant to the question, include it."""
+warning relevant to the question, include it.
+
+6. FORMAT: Your reply MUST start with a single line containing only one English word — \
+FOUND if you can answer from the passages, or NOT_FOUND if you cannot. Put the status \
+word on its own line. Then, on the following lines, write your answer in {language} (if \
+FOUND). If NOT_FOUND, write nothing after the status line."""
 
 
 EXPAND_SYSTEM = """You turn a rider's question into search queries for a motorcycle \
@@ -102,6 +105,39 @@ def expand_query(query):
         return [query]
 
 
+# Bilingual user-facing messages for the rephrase-before-refuse flow.
+REPHRASE_PROMPT = {
+    "English": ("I couldn't find that in the {name}. Could you describe the problem "
+                "differently — for example the specific part, the symptom, or other words?"),
+    "Hindi": ("मुझे यह {name} में नहीं मिला। क्या आप समस्या को अलग शब्दों में बता सकते हैं — "
+              "जैसे कोई विशेष पुर्ज़ा, कोई लक्षण, या दूसरे शब्द?"),
+}
+HARD_REFUSAL = {
+    "English": ("I couldn't find this in the {name}. Please consult a qualified mechanic "
+                "or your dealer."),
+    "Hindi": ("मुझे यह {name} में नहीं मिला। कृपया किसी योग्य मैकेनिक या अपने डीलर से "
+              "परामर्श करें।"),
+}
+
+
+def message(kind, language, manual_name):
+    """kind = 'rephrase' or 'refuse'. Returns the text in the user's language."""
+    table = REPHRASE_PROMPT if kind == "rephrase" else HARD_REFUSAL
+    return table.get(language, table["English"]).format(name=manual_name)
+
+
+def _split_status(text):
+    """Pull the FOUND / NOT_FOUND status off the first line. Returns (found, body)."""
+    lines = text.splitlines()
+    head = lines[0].strip().upper().replace(" ", "") if lines else ""
+    if head.startswith("NOT_FOUND") or head.startswith("NOTFOUND"):
+        return False, "\n".join(lines[1:]).strip()
+    if head.startswith("FOUND"):
+        return True, "\n".join(lines[1:]).strip()
+    # model didn't follow the format — assume it answered, show as-is
+    return True, text.strip()
+
+
 def build_context(results, page_kind):
     blocks = []
     for i, r in enumerate(results, 1):
@@ -111,7 +147,11 @@ def build_context(results, page_kind):
 
 
 def answer(query, results, manual_name, page_kind, language_override=None):
-    """Call Sarvam-30B and return (answer_text, language_used)."""
+    """Call Sarvam-30B. Returns (found, body, language).
+
+    found=False means the answer isn't in the manual (caller runs the
+    rephrase-then-refuse flow). body is the answer text when found.
+    """
     if language_override and language_override != "auto":
         language = language_override
     else:
@@ -140,10 +180,14 @@ def answer(query, results, manual_name, page_kind, language_override=None):
 
     # If the model's hidden reasoning used up the 4096-token budget (empty answer),
     # retry with shortened passages — same coverage, smaller input, so it fits.
-    text = call(results)
-    if not text:
-        text = call(results, max_words=130)
-    if not text:
-        text = (f"I couldn't produce a reliable answer from the {manual_name}. "
-                "Please try rephrasing your question.")
-    return text, language
+    raw = call(results)
+    if not raw:
+        raw = call(results, max_words=130)
+    if not raw:
+        # couldn't get any text — treat as "not found" so the rephrase flow runs
+        return False, "", language
+
+    found, body = _split_status(raw)
+    if found and not body:           # said FOUND but gave nothing
+        found = False
+    return found, body, language
