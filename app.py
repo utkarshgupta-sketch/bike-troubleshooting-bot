@@ -122,10 +122,17 @@ if active is not None:
                     st.warning("Please type a question or attach an image with readable text.")
                     st.stop()
 
+                # Rank retrieval by the TYPED question (fall back to image text only if
+                # image-only). The image caption is verbose English and would otherwise
+                # derail retrieval and flip the answer language for a Hindi question.
+                primary = q.strip() or image_context
                 with st.spinner("Reading the manual and answering…"):
-                    queries = llm.expand_query(combined)               # stabilise retrieval
-                    results = st.session_state["idx"].search_multi(queries, k=6)
-                    found, body, lang = llm.answer(combined, results, manual_name, info["page_kind"])
+                    expansions = llm.expand_query(combined)[1:]        # image-aware recall
+                    results = st.session_state["idx"].search_multi([primary] + expansions, k=6)
+                    answer_lang, _ = llm.detect_language(primary)      # language follows the question
+                    found, body, lang = llm.answer(
+                        combined, results, manual_name, info["page_kind"],
+                        language_override=answer_lang)
 
                 if found:
                     st.session_state["refuse_count"] = 0
