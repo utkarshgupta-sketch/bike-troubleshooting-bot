@@ -1,0 +1,8 @@
+streamlit
+sarvamai
+PyPDF2
+sentence-transformers
+faiss-cpu
+langdetect
+python-dotenv
+numpy

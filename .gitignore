@@ -1,0 +1,14 @@
+# Secrets — NEVER commit
+.env
+
+# Cached indexes (rebuilt automatically)
+cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
