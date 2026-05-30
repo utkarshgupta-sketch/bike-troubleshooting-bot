@@ -1,5 +1,15 @@
+import os
 from pathlib import Path
 import streamlit as st
+
+# On Streamlit Cloud the API key lives in st.secrets; mirror it into an env var so
+# llm.py / vision.py (which read os.environ) work both locally (.env) and on Cloud.
+try:
+    if "SARVAM_API_KEY" in st.secrets:
+        os.environ["SARVAM_API_KEY"] = str(st.secrets["SARVAM_API_KEY"])
+except Exception:
+    pass
+
 from catalogue import list_manuals
 import rag
 import llm
