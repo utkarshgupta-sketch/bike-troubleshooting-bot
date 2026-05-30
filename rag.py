@@ -18,11 +18,11 @@ import numpy as np
 logger = logging.getLogger("rag")
 
 EMBED_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-WORDS_PER_CHUNK = 200          # smaller chunks => sharper relevance
-CHUNK_OVERLAP = 40             # words shared between neighbours
+WORDS_PER_CHUNK = 300          # keeps headings with their lists; less fragmentation
+CHUNK_OVERLAP = 80             # generous overlap => stable retrieval across phrasings
 MIN_WORDS_PER_PAGE = 5         # below this average => PDF likely not readable
 MIN_LETTERS_PER_CHUNK = 25     # drop near-empty / table-noise chunks
-CACHE_VERSION = "v3"           # bump to invalidate old cached indexes
+CACHE_VERSION = "v4"           # bump to invalidate old cached indexes
 
 CACHE_DIR = Path(__file__).parent / "cache"
 TEXT_DIR = Path(__file__).parent / "manual_text"   # OCR'd text layers (committed)
@@ -51,8 +51,9 @@ def _letters(t: str) -> int:
 
 
 _STOPWORDS = set(
-    "a an the of to in on for and or is are be how do does what when where which "
-    "my your this that with without it its as at can need should i you we".split())
+    "a an the of to in on for and or is are be how do does what when where which why "
+    "my your this that with without it its as at can need should i you we will would "
+    "could from about into has have had not but very poor bad good".split())
 
 
 def _keywords(query: str):
@@ -97,6 +98,18 @@ def _pages_from_pdf(file_or_path):
     return [(i + 1, pg.extract_text() or "") for i, pg in enumerate(reader.pages)]
 
 
+def _as_page_number(tok):
+    """Parse a footer/header token into a page number, handling the common
+    extraction quirk where the number is doubled (e.g. '143143' -> 143)."""
+    if not tok.isdigit():
+        return None
+    s = tok
+    if len(s) % 2 == 0 and s[:len(s) // 2] == s[len(s) // 2:]:
+        s = s[:len(s) // 2]                    # '143143' -> '143', '167167' -> '167'
+    n = int(s)
+    return n if 1 <= n <= 1500 else None
+
+
 def _detect_page_offset(pdf_pages_clean):
     """Find the constant offset between physical page and the manual's PRINTED
     page number, by reading lone numbers from each page's header/footer.
@@ -109,15 +122,17 @@ def _detect_page_offset(pdf_pages_clean):
         toks = text.split()
         window = toks[:4] + toks[-4:]          # header + footer region
         for t in window:
-            if t.isdigit():
-                n = int(t)
-                if 1 <= n <= 1500:             # plausible printed page number
-                    offsets[n - phys] += 1
+            n = _as_page_number(t)
+            if n is not None:
+                offsets[n - phys] += 1
     if not offsets:
         return None
-    offset, count = offsets.most_common(1)[0]
-    # require decent support so we don't trust a coincidence
-    if count >= max(5, len(pdf_pages_clean) // 8):
+    common = offsets.most_common(2)
+    offset, count = common[0]
+    second = common[1][1] if len(common) > 1 else 0
+    # accept a clear winner: enough votes AND clearly ahead of the runner-up
+    # (footer numbers extract noisily, so we trust dominance over raw count)
+    if count >= 8 and count >= 1.5 * second:
         return offset
     return None
 
@@ -221,34 +236,69 @@ class ManualIndex:
         self.index = index
         self.label = label
 
-    def search(self, query, k=4, candidates=30, keyword_weight=0.5):
-        """Hybrid retrieval: semantic similarity + literal keyword overlap.
+    def _candidates(self, query, candidates=40):
+        """Return {chunk_index: (semantic_score, keyword_overlap)} for a query.
 
-        We pull a larger candidate pool by meaning, then boost candidates that
-        actually contain the query's keywords, and re-rank. This fixes exact-term
-        queries (e.g. 'exhaust') that pure semantic search ranks poorly.
+        Candidates = semantic top-N UNION every chunk literally containing a
+        query keyword (scored with its true similarity via index.reconstruct).
         """
         n = len(self.chunks)
         q = _embed([query])
-        scores, idx = self.index.search(q, min(candidates, n))
+        sims, idxs = self.index.search(q, min(candidates, n))
+        sem = {int(i): float(s) for s, i in zip(sims[0], idxs[0]) if i >= 0}
         kws = set(_keywords(query))
-        ranked = []
-        for score, i in zip(scores[0], idx[0]):
-            if i < 0:
-                continue
-            c = self.chunks[i]
-            text_l = c["text"].lower()
-            kw = (sum(1 for w in kws if w in text_l) / len(kws)) if kws else 0.0
-            combined = float(score) + keyword_weight * kw
-            ranked.append((combined, float(score), kw, c))
-        ranked.sort(key=lambda x: x[0], reverse=True)
+        if kws:
+            for i, c in enumerate(self.chunks):
+                if i in sem:
+                    continue
+                if any(w in c["text"].lower() for w in kws):
+                    sem[i] = float(np.dot(q[0], self.index.reconstruct(i)))
+        out = {}
+        for i, s in sem.items():
+            tl = self.chunks[i]["text"].lower()
+            kw = (sum(1 for w in kws if w in tl) / len(kws)) if kws else 0.0
+            out[i] = (s, kw)
+        return out
+
+    def _rank(self, cand, k, keyword_weight):
+        ranked = sorted(
+            ((sem + keyword_weight * kw, sem, kw, i) for i, (sem, kw) in cand.items()),
+            reverse=True)
         results = []
-        for combined, sem, kw, c in ranked[:k]:
+        for combined, sem, kw, i in ranked[:k]:
+            c = self.chunks[i]
             results.append({
                 "score": combined, "semantic": sem, "keyword": kw,
                 "text": c["text"], "page_start": c["page_start"], "page_end": c["page_end"],
             })
         return results
+
+    def search(self, query, k=6, keyword_weight=0.5):
+        """Hybrid retrieval for a single query string."""
+        return self._rank(self._candidates(query), k, keyword_weight)
+
+    def search_multi(self, queries, k=6, keyword_weight=0.5):
+        """Retrieval that uses expansions for RECALL but the original query for RANKING.
+
+        Reworded phrasings are only used to gather candidate passages (so we don't
+        miss a relevant chunk a single phrasing would skip). Every candidate is
+        then scored against the user's ORIGINAL question, so tangential expansions
+        (e.g. 'tyre pressure') can't push an off-topic passage to the top.
+        """
+        original = queries[0] if queries else ""
+        cand_idx = set()
+        for qq in queries:
+            cand_idx.update(self._candidates(qq).keys())
+
+        q0 = _embed([original])
+        kws = set(_keywords(original))
+        scored = {}
+        for i in cand_idx:
+            sem = float(np.dot(q0[0], self.index.reconstruct(i)))
+            tl = self.chunks[i]["text"].lower()
+            kw = (sum(1 for w in kws if w in tl) / len(kws)) if kws else 0.0
+            scored[i] = (sem, kw)
+        return self._rank(scored, k, keyword_weight)
 
     # ---- persistence (pre-loaded manuals only) ----
     def save(self, stem):

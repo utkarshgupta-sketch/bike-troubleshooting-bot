@@ -2,6 +2,7 @@ from pathlib import Path
 import streamlit as st
 from catalogue import list_manuals
 import rag
+import llm
 
 st.set_page_config(page_title="Bike Troubleshooting Bot", page_icon="🏍️")
 st.title("🏍️ Bike Troubleshooting Bot")
@@ -57,9 +58,7 @@ if active is not None:
             })
 
     st.divider()
-    st.subheader("🔎 Retrieval preview")
-    st.caption("Watch the search find relevant passages from this manual. "
-               "(No AI answer yet — that's the next step.)")
+    st.subheader("Ask about your bike")
 
     # Build or load the index for this manual, cached in the session so we don't
     # rebuild on every keystroke. Same code path for pre-loaded and uploaded.
@@ -87,13 +86,32 @@ if active is not None:
             f"page numbers: `{info['page_kind']}`"
             + (" · loaded from cache" if info.get("from_cache") else " · freshly built"))
 
-        q = st.text_input("Type a question to preview retrieval:")
-        topk = st.slider("How many passages to show", 1, 6, 3)
-        if q.strip():
-            results = st.session_state["idx"].search(q, k=topk)
-            if not results:
-                st.write("No passages found.")
-            for n, r in enumerate(results, 1):
-                cite = rag.page_citation(info["page_kind"], r["page_start"], r["page_end"])
-                with st.expander(f"#{n} · {cite} · relevance {r['score']:.2f}"):
-                    st.write(r["text"])
+        # A friendly manual name used in the answer + refusal message
+        if active["source"] == "preloaded":
+            manual_name = f"{active['brand']} {active['model']} {active['year']} {active['doctype']}"
+        else:
+            manual_name = Path(active["filename"]).stem
+
+        with st.form("ask"):
+            q = st.text_area("Your question (type in English or Hindi):", height=80,
+                             placeholder="e.g. How often should I change the engine oil?")
+            submitted = st.form_submit_button("Get answer")
+
+        if submitted and q.strip():
+            try:
+                with st.spinner("Reading the manual and answering…"):
+                    queries = llm.expand_query(q)                       # stabilise retrieval
+                    results = st.session_state["idx"].search_multi(queries, k=6)
+                    ans, lang = llm.answer(q, results, manual_name, info["page_kind"])
+                st.markdown("### Answer")
+                st.markdown(ans)
+                st.caption(f"Answered in: {lang}")
+                with st.expander("Show the manual passages used (sources)"):
+                    for n, r in enumerate(results, 1):
+                        cite = rag.page_citation(info["page_kind"], r["page_start"], r["page_end"])
+                        st.markdown(f"**#{n} · {cite} · relevance {r['score']:.2f}**")
+                        st.write(r["text"])
+            except Exception as e:
+                st.error(f"Couldn't get an answer from Sarvam: {e}")
+        elif submitted:
+            st.warning("Please type a question first.")
