@@ -180,6 +180,11 @@ Open http://localhost:8501.
   text in the image plus a caption. (We briefly trialled Gemini for richer captions but
   reverted to Sarvam‑only to stay on the specified stack.)
 - **Uploaded manuals are session‑only** — not saved, catalogued, or logged, by design.
+- **Response time depends on Sarvam API load.** Base latency is a few seconds, but it can
+  spike (occasionally tens of seconds) at busy times; each question makes up to two model
+  calls. The app shows staged progress, times calls out instead of hanging, and offers a
+  **⚡ Faster answers** toggle (skips the query‑rewrite call). Expect ~20–60s per answer,
+  more during spikes.
 
 ---
 
