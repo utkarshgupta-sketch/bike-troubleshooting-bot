@@ -100,7 +100,7 @@ and cites the page(s) it used.
 | `preflight.py` | One‑shot smoke test of every dependency before building |
 | `manuals/` | Pre‑loaded manual PDFs |
 | `manual_text/` | OCR'd text for manuals PyPDF2 can't read (committed) |
-| `cache/` | Cached FAISS indexes (git‑ignored; rebuilt on demand) |
+| `cache/` | Prebuilt FAISS indexes for the pre‑loaded manuals (committed, so cloud loads them instantly instead of re‑embedding) |
 
 **Manual filename convention** (5 fields, split on `_`):
 `<Brand>_<Model>_<Year>_<DocType>_<Language>.pdf`
@@ -145,9 +145,11 @@ Open http://localhost:8501.
    SARVAM_API_KEY = "your_key_here"
    ```
    (The app reads the key from `st.secrets` on Cloud and from `.env` locally.)
-4. Deploy. Indexes build on first use of each manual.
+4. Deploy. Prebuilt indexes for the pre‑loaded manuals ship in `cache/`, so the app
+   loads them instantly; the embedding model is pre‑loaded at startup.
 
-`requirements.txt` pins `faiss-cpu` (not `faiss`) so the Cloud build succeeds.
+`requirements.txt` pins `faiss-cpu` (not `faiss`) so the Cloud build succeeds. CPU thread
+counts are capped in `app.py` to keep latency stable on the free tier.
 
 ---
 
