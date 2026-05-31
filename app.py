@@ -1,4 +1,12 @@
 import os
+
+# Cap thread counts BEFORE torch/numpy load — on constrained hosts (Streamlit Cloud
+# free tier) the default oversubscribes the few CPUs and degrades over sustained use.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from pathlib import Path
 import streamlit as st
 
