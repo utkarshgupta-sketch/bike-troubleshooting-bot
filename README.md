@@ -239,10 +239,10 @@ and **documented the limits** rather than papering over them.
 
 **Built with Claude Code**
 The entire app was vibe‑coded collaboratively in a single, continuous **Claude Code**
-session — plan, build, debug, and deploy. Claude Code's large **~200K‑token context
-window** held the whole journey in working memory (the original brief, every design
-decision, and the full bug‑fix trail), which is what made the one‑session, plan‑first
-workflow possible.
+session — plan, build, debug, and deploy. That one session grew to roughly
+**~557K tokens of context**, holding the whole journey in working memory (the original
+brief, every design decision, and the full bug‑fix trail) — which is what made the
+one‑session, plan‑first workflow possible.
 
 ## Credits
 
