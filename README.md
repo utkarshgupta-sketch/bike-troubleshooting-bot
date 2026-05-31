@@ -190,7 +190,61 @@ counts are capped in `app.py` to keep latency stable on the free tier.
 
 ---
 
+## Building this — notes from the build
+
+**Sarvam models used**
+- **Sarvam‑30B** — all chat: grounded answers, the refusal logic, and query expansion.
+  (Deliberately not the legacy Sarvam‑M.)
+- **Sarvam Vision** (Document Intelligence) — image understanding (text + caption) and
+  the one‑time OCR of the Hindi manual, whose PDF had no extractable text layer.
+- Embeddings are **local** (sentence‑transformers), not a Sarvam API — so retrieval is
+  free and runs offline.
+
+**Cost to develop:** ≈ **₹130 of Sarvam credit** (of ₹600 available). The bulk was the
+**one‑time OCR of the 161‑page Hindi manual (~₹90)** at ₹5 per 10‑page Vision job —
+cached to `manual_text/`, so it's never re‑paid. The rest was Vision image/table
+experiments (~₹30) and Sarvam‑30B chat (token‑priced, modest). Local embeddings and
+FAISS cost nothing.
+
+**Challenges we hit and solved**
+- *Unreadable Hindi PDF* — text stored as vector outlines; PyPDF2 read nothing →
+  OCR‑rescued with Sarvam Vision, cached.
+- *Keyword misses* — a paraphrase embedder ranked exact terms ("exhaust") poorly →
+  added **hybrid** semantic + keyword retrieval.
+- *Phrasing sensitivity* — "handling is bad" vs "why is handling poor" gave different
+  answers → **query expansion** for recall, but **ranked by the original question** for
+  precision.
+- *Citations off by N pages* — physical vs printed page offsets (and doubled OCR page
+  numbers) → **printed‑page detection** with honest fallbacks.
+- *Reasoning‑model quirks* — Sarvam‑30B's hidden reasoning sometimes consumed the
+  4096‑token tier cap (empty answers) or looped → **shorten‑and‑retry**, a frequency
+  penalty, and robust `NOT_FOUND` parsing.
+- *A 422 context overflow* — Vision embeds the source image as base64 in its OCR
+  markdown, which bloated the Hindi chunks → strip embeds + clean the cached file.
+- *Image + Hindi question* — the English image caption flipped the answer language and
+  derailed retrieval → rank and detect language from the **typed question**, with the
+  image as supplementary context.
+- *Cloud cold‑starts & latency* — prebuilt indexes, model pre‑warm at boot, capped CPU
+  threads, request timeouts, staged progress, and a "Faster answers" toggle.
+
+**How the thinking evolved**
+We started **plan‑first** (no code until the plan was approved) and stayed honest
+throughout — verifying API details against the docs rather than guessing, and
+**correcting our own wrong assumptions** when the evidence disagreed. (For example, we
+first concluded Sarvam Vision couldn't caption images and reached for Gemini; on closer
+inspection Sarvam *does* caption natively, so we reverted to a pure‑Sarvam stack.) The
+recurring lesson: the hard cases (terse table answers) are a **retrieval ceiling**, not
+a prompt bug — so we invested in robustness (hybrid retrieval, rephrase‑before‑refuse)
+and **documented the limits** rather than papering over them.
+
+**Built with Claude Code**
+The entire app was vibe‑coded collaboratively in a single, continuous **Claude Code**
+session — plan, build, debug, and deploy. Claude Code's large **~200K‑token context
+window** held the whole journey in working memory (the original brief, every design
+decision, and the full bug‑fix trail), which is what made the one‑session, plan‑first
+workflow possible.
+
 ## Credits
 
 Built with the Sarvam AI platform (Sarvam‑30B, Sarvam Vision) and open‑source tooling
-(Streamlit, sentence‑transformers, FAISS, PyPDF2).
+(Streamlit, sentence‑transformers, FAISS, PyPDF2). Developed with Claude Code.
