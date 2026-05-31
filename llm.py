@@ -95,6 +95,7 @@ def expand_query(query):
                 {"role": "user", "content": query},
             ],
             temperature=0.0, reasoning_effort="low", max_tokens=1500,
+            request_options={"timeout_in_seconds": 60, "max_retries": 1},
         )
         text = resp.choices[0].message.content or ""
         extra = [ln.strip(" -•\t").strip() for ln in text.splitlines() if ln.strip()]
@@ -185,6 +186,7 @@ def answer(query, results, manual_name, page_kind, language_override=None):
             reasoning_effort="low", # minimum hidden "thinking" (cannot be disabled)
             max_tokens=4096,        # starter-tier hard cap (reasoning shares this budget)
             frequency_penalty=0.2,  # mild: discourage repetition loops without distorting facts
+            request_options={"timeout_in_seconds": 120, "max_retries": 1},
         )
         return (resp.choices[0].message.content or "").strip()
 

@@ -110,7 +110,12 @@ if active is not None:
                 "…or attach a photo (dashboard light, warning label, manual page). "
                 "Optional — works with or without a typed question.",
                 type=["png", "jpg", "jpeg"])
+            fast = st.checkbox(
+                "⚡ Faster answers (skip the query-rewrite step)", value=False,
+                help="Sarvam can be slow when busy. This skips one model call to roughly "
+                     "halve the wait, with slightly less retrieval robustness.")
             submitted = st.form_submit_button("Get answer")
+        st.caption("⏳ Answers can take 30–90s when the Sarvam API is busy.")
 
         if submitted and (q.strip() or image is not None):
             try:
@@ -136,10 +141,17 @@ if active is not None:
                 # image-only). The image caption is verbose English and would otherwise
                 # derail retrieval and flip the answer language for a Hindi question.
                 primary = q.strip() or image_context
-                with st.spinner("Reading the manual and answering…"):
-                    expansions = llm.expand_query(combined)[1:]        # image-aware recall
+
+                # Staged so it never looks frozen. Query-rewrite is one extra Sarvam
+                # call; "Faster answers" skips it. (Also skipped when image-only.)
+                expansions = []
+                if not fast and q.strip():
+                    with st.spinner("Step 1/3 · Rewriting your question for better search…"):
+                        expansions = llm.expand_query(combined)[1:]    # image-aware recall
+                with st.spinner("Step 2/3 · Searching the manual…"):
                     results = st.session_state["idx"].search_multi([primary] + expansions, k=6)
                     answer_lang, _ = llm.detect_language(primary)      # language follows the question
+                with st.spinner("Step 3/3 · Asking Sarvam-30B for a grounded answer…"):
                     found, body, lang = llm.answer(
                         combined, results, manual_name, info["page_kind"],
                         language_override=answer_lang)
@@ -164,6 +176,11 @@ if active is not None:
                         st.session_state["refuse_count"] = 0
                         st.warning(llm.message("refuse", lang, manual_name))
             except Exception as e:
-                st.error(f"Couldn't get an answer from Sarvam: {e}")
+                msg = str(e).lower()
+                if "timeout" in msg or "timed out" in msg:
+                    st.error("⏳ Sarvam is taking too long right now. Please try again in a "
+                             "moment (and consider ticking 'Faster answers').")
+                else:
+                    st.error(f"Couldn't get an answer from Sarvam: {e}")
         elif submitted:
             st.warning("Please type a question or attach an image first.")
