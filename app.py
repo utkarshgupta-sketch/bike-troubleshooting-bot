@@ -18,6 +18,11 @@ import vision
 st.set_page_config(page_title="Bike Troubleshooting Bot", page_icon="🏍️")
 st.title("🏍️ Bike Troubleshooting Bot")
 
+# Warm up the embedding model once at startup (singleton). On Streamlit Cloud this
+# pays the one-time model download at boot, so the FIRST question isn't slowed by it.
+with st.spinner("Warming up… (one-time model load)"):
+    rag.get_embedder()
+
 UPLOAD_OPTION = "⬆️  Upload my own PDF…"
 
 # NOTE (deferred): full interface localization (whole UI switches EN/Hindi, chosen
