@@ -1,8 +1,10 @@
 # Secrets — NEVER commit
 .env
 
-# Cached indexes (rebuilt automatically)
-cache/
+# Cache: commit the prebuilt manual indexes (fast cloud startup), ignore the rest
+cache/*
+!cache/*.faiss
+!cache/*.chunks.json
 
 # Python
 __pycache__/
